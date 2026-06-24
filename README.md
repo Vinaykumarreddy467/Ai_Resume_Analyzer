@@ -1,33 +1,36 @@
 # AI Resume Analyzer
 
-A Python tool that compares a candidate's resume PDF against a job description PDF using a local LLM (Ollama), then generates a structured analysis report.
+A web-based tool that compares a candidate's resume PDF against a job description PDF using a local LLM (Ollama), then displays a structured analysis in a beautiful dashboard.
 
 ## Features
 
-- Extracts text from resume and job description PDFs
-- Sends both to a local LLM for ATS-style comparison
-- Returns structured analysis: match score, matching/missing skills, strengths, weaknesses, recommendations
-- Saves results as timestamped JSON reports
-- Built-in HTML dashboard with drag-and-drop upload and visual results (standalone demo)
+- **Web UI** with drag-and-drop PDF upload
+- **Real-time progress** — animated timeline shows each step
+- **ATS-style comparison** — match score, matching/missing skills, strengths, weaknesses, recommendations
+- **Local LLM** — runs entirely on your machine via Ollama (no API keys needed)
+- **Report history** — browse and download past analyses
+- **Animated dashboard** — glassmorphism design with card reveal animations
 
 ## Project Structure
 
 ```
 ai-resume-analyzer/
+├── app.py                # FastAPI web server (run this)
+├── main.py               # CLI entry point (alternative)
+├── index.html            # Frontend dashboard
 ├── .env                  # Ollama config (URL + model name)
 ├── .gitignore
 ├── README.md
-├── main.py               # Entry point — runs the full analysis pipeline
-├── index.html            # Frontend dashboard (static demo, not connected to backend)
 ├── data/
 │   ├── resume.pdf        # Place your resume PDF here
 │   └── jd.pdf            # Place your job description PDF here
 ├── reports/              # Generated JSON analysis reports
-└── services/
-    ├── pdfreader.py       # PDF text extraction via pypdf
-    ├── prompbuilder.py    # Builds the LLM prompt
-    ├── llmservice.py      # Calls Ollama API (streaming)
-    └── reportgenerator.py # Saves analysis as JSON
+├── services/
+│   ├── pdfreader.py       # PDF text extraction via pypdf
+│   ├── prompbuilder.py    # Builds the LLM prompt
+│   ├── llmservice.py      # Calls Ollama API (streaming)
+│   └── reportgenerator.py # Saves analysis as JSON
+└── venv/                 # Python virtual environment (local)
 ```
 
 ## Prerequisites
@@ -40,13 +43,15 @@ ai-resume-analyzer/
 
 1. Clone the repo:
    ```bash
-   git clone <repo-url>
-   cd ai-resume-analyzer
+   git clone https://github.com/Vinaykumarreddy467/Ai_Resume_Analyzer.git
+   cd Ai_Resume_Analyzer
    ```
 
-2. Install dependencies:
+2. Create a virtual environment and install dependencies:
    ```bash
-   pip install pypdf requests python-dotenv
+   python3 -m venv venv
+   source venv/bin/activate   # On Windows: venv\Scripts\activate
+   pip install -r requirements.txt
    ```
 
 3. Configure the model in `.env`:
@@ -61,17 +66,32 @@ ai-resume-analyzer/
 
 ## Usage
 
+### Web UI (Recommended)
+
 ```bash
+source venv/bin/activate
+python app.py
+```
+
+Open **http://localhost:8000** in your browser. Upload both PDFs and click **Start Analysis**.
+
+### CLI Mode
+
+```bash
+source venv/bin/activate
 python main.py
 ```
 
-The script will:
-1. Extract text from both PDFs
-2. Build a comparison prompt
-3. Send it to your local LLM
-4. Print the streaming response
-5. Parse the JSON output
-6. Save the report to `reports/`
+The script extracts text from both PDFs, runs the analysis, prints the streaming response, and saves the report to `reports/`.
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/` | GET | Serves the frontend dashboard |
+| `/analyze` | POST | Upload resume + JD PDFs, returns analysis JSON |
+| `/reports` | GET | Lists all past analysis reports |
+| `/reports/{filename}` | GET | Downloads a specific report JSON |
 
 ### Example Output
 
@@ -80,29 +100,22 @@ The script will:
     "candidate_name": "John Doe",
     "candidate_role": "Full Stack Developer",
     "match_score": 87,
-    "matching_skills": ["JavaScript", "React", "Python", ...],
-    "missing_skills": ["Kubernetes", "Terraform", ...],
-    "strengths": ["Strong full-stack experience", ...],
-    "weaknesses": ["Limited DevOps experience", ...],
-    "recommendations": ["Learn Kubernetes", ...]
+    "matching_skills": ["JavaScript", "React", "Python"],
+    "missing_skills": ["Kubernetes", "Terraform"],
+    "strengths": ["Strong full-stack experience"],
+    "weaknesses": ["Limited DevOps experience"],
+    "recommendations": ["Learn Kubernetes"],
+    "total_runtime_seconds": 8.42,
+    "llm_runtime_seconds": 6.10,
+    "processing_runtime_seconds": 2.32
 }
 ```
-
-## HTML Dashboard
-
-`index.html` provides a visual frontend with:
-- Drag-and-drop PDF upload
-- Animated progress timeline
-- Metrics, results, and insights cards
-- Local report history (saved in browser)
-
-> **Note:** The frontend is a standalone demo with hardcoded sample data. It is not currently connected to the Python backend.
 
 ## Performance
 
 Runs entirely locally via Ollama — no API keys, no data leaves your machine. Performance depends on your hardware and model choice:
 
-| Model | Size | Est. Time (CPU) |
+| Model | Size | Est. Time (CPU, 4 cores) |
 |---|---|---|
 | phi3:latest | 2.2 GB | ~25-40 sec |
 | qwen2.5-coder:7b | 4.7 GB | ~60-90 sec |

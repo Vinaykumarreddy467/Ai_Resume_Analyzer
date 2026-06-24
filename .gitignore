@@ -43,3 +43,14 @@ documentation
 reports/
 data/
 
+# Virtual environment
+venv/
+.venv/
+
+# Temp uploads
+data/temp/
+
+# IDE
+.vscode/
+.idea/
+

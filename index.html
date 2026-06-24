@@ -1011,8 +1011,7 @@ const performanceSection = document.getElementById('performance-section');
 const reportsSection = document.getElementById('reports-section');
 
 const progressSteps = [
-  { name: 'Resume Uploaded', icon: '📄' },
-  { name: 'JD Uploaded', icon: '📋' },
+  { name: 'Uploading PDFs', icon: '📤' },
   { name: 'Resume Extracted', icon: '📝' },
   { name: 'JD Extracted', icon: '📝' },
   { name: 'Prompt Generated', icon: '✨' },
@@ -1021,15 +1020,20 @@ const progressSteps = [
   { name: 'Report Saved', icon: '💾' }
 ];
 
+let latestAnalysis = null;
+
 analyzeBtn.addEventListener('click', startAnalysis);
 
 async function startAnalysis() {
+  const btn = analyzeBtn;
+  btn.disabled = true;
+  btn.textContent = 'Analyzing...';
+
   // Show progress section
   progressSection.classList.add('visible');
   const progressTimeline = document.getElementById('progress-timeline');
   progressTimeline.innerHTML = '';
 
-  // Create progress steps
   progressSteps.forEach((step, index) => {
     const stepEl = document.createElement('div');
     stepEl.className = 'progress-step';
@@ -1041,68 +1045,111 @@ async function startAnalysis() {
     progressTimeline.appendChild(stepEl);
   });
 
-  // Simulate progress steps completion
-  for (let i = 0; i < progressSteps.length; i++) {
-    await new Promise(resolve => setTimeout(resolve, 800));
+  function markStep(index) {
     const steps = document.querySelectorAll('.progress-step');
-    if (steps[i]) {
-      steps[i].classList.add('complete');
-      const icon = steps[i].querySelector('.progress-step-icon');
+    if (steps[index]) {
+      steps[index].classList.add('complete');
+      const icon = steps[index].querySelector('.progress-step-icon');
       icon.textContent = '✓';
       icon.classList.add('checkmark');
     }
   }
 
-  // Show other sections after progress completes
-  await new Promise(resolve => setTimeout(resolve, 500));
-  metricsSection.classList.add('visible');
-  renderMetrics();
+  async function step(index) {
+    markStep(index);
+    await new Promise(r => setTimeout(r, 400));
+  }
 
-  await new Promise(resolve => setTimeout(resolve, 400));
-  resultsSection.classList.add('visible');
-  renderResults();
+  try {
+    // Step 0: Uploading
+    await step(0);
 
-  await new Promise(resolve => setTimeout(resolve, 400));
-  insightsSection.classList.add('visible');
-  renderInsights();
+    // Build form data
+    const formData = new FormData();
+    formData.append('resume', uploadedFiles.resume);
+    formData.append('jd', uploadedFiles.jd);
 
-  await new Promise(resolve => setTimeout(resolve, 400));
-  performanceSection.classList.add('visible');
-  renderPerformance();
+    // Step 1: Resume extracted
+    await step(1);
+    // Step 2: JD extracted
+    await step(2);
+    // Step 3: Prompt generated
+    await step(3);
+    // Step 4-5: LLM running
+    await step(4);
+    await step(5);
 
-  // Save report and show history
-  saveReport();
-  reportsSection.classList.add('visible');
-  renderReportHistory();
+    // Call API
+    const response = await fetch('/analyze', {
+      method: 'POST',
+      body: formData
+    });
 
-  // Show clear button
-  document.getElementById('clear-all-btn').style.display = 'flex';
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.detail || 'Analysis failed');
+    }
+
+    const result = await response.json();
+    latestAnalysis = result.data;
+
+    // Step 6: Report saved
+    await step(6);
+    await new Promise(r => setTimeout(r, 400));
+
+    // Show results
+    metricsSection.classList.add('visible');
+    renderMetrics(result.data);
+
+    await new Promise(r => setTimeout(r, 300));
+    resultsSection.classList.add('visible');
+    renderResults(result.data);
+
+    await new Promise(r => setTimeout(r, 300));
+    insightsSection.classList.add('visible');
+    renderInsights(result.data);
+
+    await new Promise(r => setTimeout(r, 300));
+    performanceSection.classList.add('visible');
+    renderPerformance(result.data);
+
+    reportsSection.classList.add('visible');
+    renderReportHistory();
+
+    document.getElementById('clear-all-btn').style.display = 'flex';
+  } catch (err) {
+    alert('Error: ' + err.message);
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Start Analysis';
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════
 // METRICS RENDERING
 // ══════════════════════════════════════════════════════════════════
 
-function renderMetrics() {
-  const metricsGrid = document.getElementById('metrics-grid');
-  metricsGrid.innerHTML = '';
+function renderMetrics(data) {
+  const grid = document.getElementById('metrics-grid');
+  grid.innerHTML = '';
 
   const metrics = [
-    { label: 'Match Score', value: '87', unit: '%' },
-    { label: 'Skills Matched', value: '14', unit: '' },
-    { label: 'Missing Skills', value: '5', unit: '' },
-    { label: 'Runtime', value: '8.42', unit: 's' }
+    { label: 'Match Score', value: data.match_score ?? '-', unit: '%' },
+    { label: 'Skills Matched', value: (data.matching_skills || []).length, unit: '' },
+    { label: 'Missing Skills', value: (data.missing_skills || []).length, unit: '' },
+    { label: 'Runtime', value: (data.total_runtime_seconds ?? '-').toString(), unit: 's' }
   ];
 
-  metrics.forEach((metric, index) => {
+  metrics.forEach((m, i) => {
     const card = document.createElement('div');
     card.className = 'metric-card';
-    card.style.animationDelay = `${index * 0.15}s`;
+    card.style.animationDelay = `${i * 0.15}s`;
     card.innerHTML = `
-      <div class="metric-value">${metric.value}<span style="font-size:0.6em">${metric.unit}</span></div>
-      <div class="metric-label">${metric.label}</div>
+      <div class="metric-value">${m.value}<span style="font-size:0.6em">${m.unit}</span></div>
+      <div class="metric-label">${m.label}</div>
     `;
-    metricsGrid.appendChild(card);
+    grid.appendChild(card);
   });
 }
 
@@ -1110,76 +1157,58 @@ function renderMetrics() {
 // RESULTS RENDERING
 // ══════════════════════════════════════════════════════════════════
 
-function renderResults() {
-  const resultsGrid = document.getElementById('results-grid');
-  resultsGrid.innerHTML = '';
+function renderResults(data) {
+  const grid = document.getElementById('results-grid');
+  grid.innerHTML = '';
 
-  const results = [
+  const cards = [
     {
       title: 'Match Score',
-      type: 'score',
-      content: '87%'
+      render: () => `
+        <div style="font-size:48px;font-weight:700;color:var(--text-primary);text-align:center;padding:16px 0">
+          ${data.match_score ?? '-'}<span style="font-size:24px;opacity:0.6">%</span>
+        </div>`
     },
     {
       title: 'Matching Skills',
-      type: 'skills',
-      content: ['JavaScript', 'React', 'Python', 'FastAPI', 'PostgreSQL', 'Docker', 'AWS', 'REST APIs', 'GraphQL', 'Git', 'Linux', 'Agile', 'TypeScript', 'Vue.js']
+      render: () => (data.matching_skills || []).length
+        ? '<div class="result-content">' + data.matching_skills.map(s => `<span class="skill-tag">${s}</span>`).join('') + '</div>'
+        : '<p style="color:var(--text-secondary)">No matching skills found</p>'
     },
     {
       title: 'Missing Skills',
-      type: 'skills',
-      content: ['Kubernetes', 'Terraform', 'Kafka', 'Machine Learning', 'Scala']
+      render: () => (data.missing_skills || []).length
+        ? '<div class="result-content">' + data.missing_skills.map(s => `<span class="skill-tag">${s}</span>`).join('') + '</div>'
+        : '<p style="color:var(--text-secondary)">No missing skills identified</p>'
     },
     {
       title: 'Strengths',
-      type: 'list',
-      content: ['Strong full-stack development experience', 'Excellent problem-solving skills', 'Good experience with modern frontend frameworks', 'Solid understanding of cloud platforms', 'Experience with DevOps practices']
+      render: () => (data.strengths || []).length
+        ? '<ul class="result-list">' + data.strengths.map(s => `<li class="result-item">${s}</li>`).join('') + '</ul>'
+        : '<p style="color:var(--text-secondary)">No strengths listed</p>'
     },
     {
       title: 'Weaknesses',
-      type: 'list',
-      content: ['Limited experience with Kubernetes', 'No mention of CI/CD pipeline tools', 'Missing data engineering experience', 'Limited backend database optimization skills', 'No experience with containerization at scale']
+      render: () => (data.weaknesses || []).length
+        ? '<ul class="result-list">' + data.weaknesses.map(s => `<li class="result-item">${s}</li>`).join('') + '</ul>'
+        : '<p style="color:var(--text-secondary)">No weaknesses listed</p>'
     },
     {
       title: 'Recommendations',
-      type: 'numbered',
-      content: ['Learn Kubernetes for orchestration', 'Gain experience with CI/CD tools like Jenkins or GitLab CI', 'Explore data engineering with tools like Spark or Hadoop', 'Study advanced database optimization techniques', 'Build experience with distributed systems']
+      render: () => (data.recommendations || []).length
+        ? data.recommendations.map((r, i) =>
+            `<div class="result-numbered"><div class="result-number">${i + 1}</div><div>${r}</div></div>`
+          ).join('')
+        : '<p style="color:var(--text-secondary)">No recommendations</p>'
     }
   ];
 
-  results.forEach((result, index) => {
-    const card = document.createElement('div');
-    card.className = 'result-card';
-    card.style.animationDelay = `${index * 0.15}s`;
-    
-    let contentHTML = '';
-    
-    if (result.type === 'score') {
-      contentHTML = `<div style="font-size: 36px; font-weight: 700; color: var(--text-primary);">${result.content}</div>`;
-    } else if (result.type === 'skills') {
-      contentHTML = result.content
-        .map(skill => `<span class="skill-tag">${skill}</span>`)
-        .join('');
-    } else if (result.type === 'list') {
-      contentHTML = `<ul class="result-list">
-        ${result.content.map(item => `<li class="result-item">${item}</li>`).join('')}
-      </ul>`;
-    } else if (result.type === 'numbered') {
-      contentHTML = result.content
-        .map((item, i) => `
-          <div class="result-numbered">
-            <div class="result-number">${i + 1}</div>
-            <div>${item}</div>
-          </div>
-        `)
-        .join('');
-    }
-
-    card.innerHTML = `
-      <div class="result-title">${result.title}</div>
-      <div class="result-content">${contentHTML}</div>
-    `;
-    resultsGrid.appendChild(card);
+  cards.forEach((card, i) => {
+    const el = document.createElement('div');
+    el.className = 'result-card';
+    el.style.animationDelay = `${i * 0.12}s`;
+    el.innerHTML = `<div class="result-title">${card.title}</div>${card.render()}`;
+    grid.appendChild(el);
   });
 }
 
@@ -1187,56 +1216,54 @@ function renderResults() {
 // INSIGHTS RENDERING
 // ══════════════════════════════════════════════════════════════════
 
-function renderInsights() {
-  const insightsGrid = document.getElementById('insights-grid');
-  insightsGrid.innerHTML = '';
+function renderInsights(data) {
+  const grid = document.getElementById('insights-grid');
+  grid.innerHTML = '';
 
   const insights = [
     {
       title: 'Resume Summary',
       icon: '📄',
       data: {
-        fileName: 'John_Doe_Resume.pdf',
-        pages: 2,
-        words: 1250
+        fileName: data.resume_filename || 'Unknown',
+        candidateName: data.candidate_name || 'Unknown',
+        candidateRole: data.candidate_role || 'Unknown'
       },
-      preview: 'Senior Full Stack Developer with 7+ years of experience in building scalable web applications. Proficient in JavaScript, Python, and modern cloud technologies...'
+      preview: data.strengths?.[0] || 'No summary available.'
     },
     {
       title: 'Job Description Summary',
       icon: '📋',
       data: {
-        fileName: 'Senior_Dev_JD.pdf',
-        pages: 1,
-        words: 680
+        fileName: data.jd_filename || 'Unknown',
+        matchScore: data.match_score ?? '-',
+        missingSkills: (data.missing_skills || []).length
       },
-      preview: 'We are seeking a Senior Full Stack Engineer with expertise in JavaScript, Python, and AWS. The ideal candidate will have experience with microservices, containerization...'
+      preview: data.weaknesses?.[0] || 'No summary available.'
     }
   ];
 
-  insights.forEach((insight, index) => {
+  insights.forEach((insight, i) => {
     const card = document.createElement('div');
     card.className = 'insight-card';
-    card.style.animationDelay = `${index * 0.15}s`;
+    card.style.animationDelay = `${i * 0.15}s`;
+
+    let metaHTML = '';
+    for (const [key, val] of Object.entries(insight.data)) {
+      const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
+      metaHTML += `
+        <div class="insight-meta-item">
+          <span class="insight-meta-label">${label}:</span>
+          <span class="insight-meta-value">${val}</span>
+        </div>`;
+    }
+
     card.innerHTML = `
       <div class="insight-title">${insight.icon} ${insight.title}</div>
-      <div class="insight-meta">
-        <div class="insight-meta-item">
-          <span class="insight-meta-label">File Name:</span>
-          <span class="insight-meta-value">${insight.data.fileName}</span>
-        </div>
-        <div class="insight-meta-item">
-          <span class="insight-meta-label">Pages:</span>
-          <span class="insight-meta-value">${insight.data.pages}</span>
-        </div>
-        <div class="insight-meta-item">
-          <span class="insight-meta-label">Word Count:</span>
-          <span class="insight-meta-value">${insight.data.words}</span>
-        </div>
-      </div>
+      <div class="insight-meta">${metaHTML}</div>
       <div class="insight-preview">"${insight.preview}"</div>
     `;
-    insightsGrid.appendChild(card);
+    grid.appendChild(card);
   });
 }
 
@@ -1244,29 +1271,29 @@ function renderInsights() {
 // PERFORMANCE RENDERING
 // ══════════════════════════════════════════════════════════════════
 
-function renderPerformance() {
-  const performanceCard = document.getElementById('performance-card');
-  const now = new Date();
-  const timestamp = now.toLocaleString('en-US', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
+function renderPerformance(data) {
+  const card = document.getElementById('performance-card');
+  const now = new Date().toLocaleString('en-US', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit'
   });
 
-  performanceCard.innerHTML = `
+  card.innerHTML = `
     <div class="performance-item">
-      <span class="performance-label">Model Name</span>
-      <span class="performance-value">Gemma 7B</span>
+      <span class="performance-label">Total Runtime</span>
+      <span class="performance-value">${data.total_runtime_seconds ?? '-'}s</span>
     </div>
     <div class="performance-item">
-      <span class="performance-label">Runtime</span>
-      <span class="performance-value">8.42s</span>
+      <span class="performance-label">LLM Runtime</span>
+      <span class="performance-value">${data.llm_runtime_seconds ?? '-'}s</span>
+    </div>
+    <div class="performance-item">
+      <span class="performance-label">Processing Time</span>
+      <span class="performance-value">${data.processing_runtime_seconds ?? '-'}s</span>
     </div>
     <div class="performance-item">
       <span class="performance-label">Generated At</span>
-      <span class="performance-value">${timestamp}</span>
+      <span class="performance-value">${now}</span>
     </div>
   `;
 }
@@ -1275,87 +1302,75 @@ function renderPerformance() {
 // REPORT HISTORY
 // ══════════════════════════════════════════════════════════════════
 
-function getReportHistory() {
-  const saved = localStorage.getItem('resumeAnalysisReports');
-  return saved ? JSON.parse(saved) : [];
-}
+async function renderReportHistory() {
+  const grid = document.getElementById('reports-grid');
+  const section = document.getElementById('reports-section');
 
-function saveReport() {
-  const reports = getReportHistory();
-  const newReport = {
-    id: Date.now(),
-    name: `${uploadedFiles.resume.name.replace('.pdf', '')} - ${new Date().toLocaleDateString()}`,
-    timestamp: new Date().toLocaleString(),
-    matchScore: 87,
-    fullData: {
-      resume: uploadedFiles.resume.name,
-      jd: uploadedFiles.jd.name,
-      matchScore: 87,
-      skillsMatched: 14,
-      missingSkills: 5,
-      runtime: 8.42,
-      generatedAt: new Date().toISOString()
+  try {
+    const res = await fetch('/reports');
+    const data = await res.json();
+    const reports = data.reports || [];
+
+    if (reports.length === 0) {
+      grid.innerHTML = '<p style="color:var(--text-secondary);">No reports yet. Run an analysis first!</p>';
+      return;
     }
-  };
-  reports.unshift(newReport);
-  localStorage.setItem('resumeAnalysisReports', JSON.stringify(reports));
-}
 
-function renderReportHistory() {
-  const reportsGrid = document.getElementById('reports-grid');
-  const reports = getReportHistory();
-
-  if (reports.length === 0) {
-    reportsGrid.innerHTML = '<p style="color:var(--text-secondary);">No reports yet.</p>';
-    return;
-  }
-
-  reportsGrid.innerHTML = '';
-  reports.slice(0, 6).forEach((report, index) => {
-    const card = document.createElement('div');
-    card.className = 'report-card';
-    card.style.animationDelay = `${index * 0.1}s`;
-    card.innerHTML = `
-      <div class="report-header">
-        <div class="report-name">${report.name}</div>
-        <div class="report-score">${report.matchScore}%</div>
-      </div>
-      <div class="report-time">${report.timestamp}</div>
-      <div class="report-actions">
-        <button class="report-btn report-btn-view" onclick="viewReport(${report.id})">View</button>
-        <button class="report-btn report-btn-download" onclick="downloadReport(${report.id})">Download</button>
-      </div>
-    `;
-    reportsGrid.appendChild(card);
-  });
-}
-
-function viewReport(reportId) {
-  const reports = getReportHistory();
-  const report = reports.find(r => r.id === reportId);
-  if (report) {
-    alert(`Report: ${report.name}\n\nMatch Score: ${report.fullData.matchScore}%\nSkills Matched: ${report.fullData.skillsMatched}\nRuntime: ${report.fullData.runtime}s`);
+    grid.innerHTML = '';
+    reports.slice(0, 6).forEach((report, i) => {
+      const card = document.createElement('div');
+      card.className = 'report-card';
+      card.style.animationDelay = `${i * 0.1}s`;
+      card.innerHTML = `
+        <div class="report-header">
+          <div class="report-name">${report.candidate_name || 'Unknown'} — ${report.candidate_role || 'Unknown'}</div>
+          <div class="report-score">${report.match_score ?? '-'}%</div>
+        </div>
+        <div class="report-time">${report.filename}</div>
+        <div class="report-actions">
+          <button class="report-btn report-btn-view" onclick="viewReport('${report.filename}')">View</button>
+          <button class="report-btn report-btn-download" onclick="downloadReport('${report.filename}')">Download</button>
+        </div>
+      `;
+      grid.appendChild(card);
+    });
+  } catch (err) {
+    grid.innerHTML = '<p style="color:var(--text-secondary);">Could not load reports.</p>';
   }
 }
 
-function downloadReport(reportId) {
-  const reports = getReportHistory();
-  const report = reports.find(r => r.id === reportId);
-  if (report) {
-    const json = JSON.stringify(report.fullData, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
+async function viewReport(filename) {
+  try {
+    const res = await fetch('/reports');
+    const data = await res.json();
+    const report = (data.reports || []).find(r => r.filename === filename);
+    if (report) {
+      alert(`Report: ${report.candidate_name}\nRole: ${report.candidate_role}\nMatch Score: ${report.match_score}%`);
+    }
+  } catch (err) {
+    alert('Could not load report');
+  }
+}
+
+async function downloadReport(filename) {
+  try {
+    const res = await fetch(`/reports/${filename}`);
+    if (!res.ok) throw new Error('Not found');
+    const json = await res.json();
+    const blob = new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${report.name}.json`;
+    a.download = filename;
     a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert('Could not download report');
   }
 }
 
-// Initialize reports on page load
-window.addEventListener('load', () => {
-  renderReportHistory();
-});
+// Load report history on page load
+window.addEventListener('load', renderReportHistory);
 
 // ══════════════════════════════════════════════════════════════════
 // CLEAR ALL FUNCTIONALITY
