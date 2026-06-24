@@ -1,14 +1,15 @@
 # AI Resume Analyzer
 
-A web-based tool that compares a candidate's resume PDF against a job description PDF using a local LLM (Ollama), then displays a structured analysis in a beautiful dashboard.
+A web-based tool that compares a candidate's resume PDF against a job description PDF using **Groq cloud API**, then displays a structured analysis in a beautiful animated dashboard.
 
 ## Features
 
 - **Web UI** with drag-and-drop PDF upload
 - **Real-time progress** — animated timeline shows each step
 - **ATS-style comparison** — match score, matching/missing skills, strengths, weaknesses, recommendations
-- **Local LLM** — runs entirely on your machine via Ollama (no API keys needed)
+- **Groq cloud AI** — blazing fast responses (~2 seconds)
 - **Report history** — browse and download past analyses
+- **Structured logging** — console + file + error logs for tracing issues
 - **Animated dashboard** — glassmorphism design with card reveal animations
 
 ## Project Structure
@@ -18,26 +19,28 @@ ai-resume-analyzer/
 ├── app.py                # FastAPI web server (run this)
 ├── main.py               # CLI entry point (alternative)
 ├── index.html            # Frontend dashboard
-├── .env                  # Ollama config (URL + model name)
+├── .env.example          # Template for environment variables
 ├── .gitignore
+├── requirements.txt
 ├── README.md
-├── data/
-│   ├── resume.pdf        # Place your resume PDF here
-│   └── jd.pdf            # Place your job description PDF here
+├── data/temp/            # Temporary uploaded PDFs (auto-cleaned)
 ├── reports/              # Generated JSON analysis reports
+├── logs/                 # Application logs
+│   ├── analyzer.log      # Full debug log
+│   └── errors.log        # Errors only
 ├── services/
+│   ├── logger.py          # Centralized logging setup
 │   ├── pdfreader.py       # PDF text extraction via pypdf
 │   ├── prompbuilder.py    # Builds the LLM prompt
-│   ├── llmservice.py      # Calls Ollama API (streaming)
+│   ├── llmservice.py      # Groq cloud API client
 │   └── reportgenerator.py # Saves analysis as JSON
 └── venv/                 # Python virtual environment (local)
 ```
 
 ## Prerequisites
 
-- [Ollama](https://ollama.com) installed and running
 - Python 3.8+
-- A model pulled in Ollama (e.g., `ollama pull phi3:latest`)
+- A **Groq API key** (free) — get one at [console.groq.com/keys](https://console.groq.com/keys)
 
 ## Setup
 
@@ -54,15 +57,15 @@ ai-resume-analyzer/
    pip install -r requirements.txt
    ```
 
-3. Configure the model in `.env`:
+3. Configure your Groq API key in `.env`:
+   ```bash
+   cp .env.example .env
    ```
-   OLLAMA_URL=http://localhost:11434
-   MODEL_NAME=phi3:latest
+   Then edit `.env` and add your key:
    ```
-
-4. Place your PDFs:
-   - `data/resume.pdf` — candidate resume
-   - `data/jd.pdf` — job description
+   GROQ_API_KEY=gsk_your_key_here
+   GROQ_MODEL=llama-3.1-8b-instant
+   ```
 
 ## Usage
 
@@ -77,12 +80,18 @@ Open **http://localhost:8000** in your browser. Upload both PDFs and click **Sta
 
 ### CLI Mode
 
+Place your PDFs in the `data/` folder:
+```
+data/
+├── resume.pdf
+└── jd.pdf
+```
+
+Then run:
 ```bash
 source venv/bin/activate
 python main.py
 ```
-
-The script extracts text from both PDFs, runs the analysis, prints the streaming response, and saves the report to `reports/`.
 
 ## API Endpoints
 
@@ -97,26 +106,35 @@ The script extracts text from both PDFs, runs the analysis, prints the streaming
 
 ```json
 {
-    "candidate_name": "John Doe",
-    "candidate_role": "Full Stack Developer",
-    "match_score": 87,
-    "matching_skills": ["JavaScript", "React", "Python"],
-    "missing_skills": ["Kubernetes", "Terraform"],
-    "strengths": ["Strong full-stack experience"],
-    "weaknesses": ["Limited DevOps experience"],
-    "recommendations": ["Learn Kubernetes"],
-    "total_runtime_seconds": 8.42,
-    "llm_runtime_seconds": 6.10,
-    "processing_runtime_seconds": 2.32
+    "candidate_name": "Vinay Kumar Reddy",
+    "candidate_role": "Front-end Developer",
+    "match_score": 60,
+    "matching_skills": ["JavaScript", "React", "HTML/CSS"],
+    "missing_skills": ["Java", "Spring Boot", "Microservices"],
+    "strengths": ["Strong frontend experience with modern frameworks"],
+    "weaknesses": ["Limited backend and Java ecosystem experience"],
+    "recommendations": ["Learn Spring Boot", "Build backend projects"],
+    "total_runtime_seconds": 2.48,
+    "llm_runtime_seconds": 2.33,
+    "processing_runtime_seconds": 0.15
 }
+```
+
+## Logs
+
+All application activity is logged automatically:
+
+| File | Level | Contents |
+|---|---|---|
+| `logs/analyzer.log` | DEBUG+ | Every step — PDF extraction, prompt, LLM call, results |
+| `logs/errors.log` | ERROR+ | Only errors with full Python tracebacks |
+
+Set log levels via environment variables:
+```bash
+LOG_LEVEL_CONSOLE=DEBUG   # More verbose console output
+LOG_LEVEL_FILE=INFO       # Less verbose file output
 ```
 
 ## Performance
 
-Runs entirely locally via Ollama — no API keys, no data leaves your machine. Performance depends on your hardware and model choice:
-
-| Model | Size | Est. Time (CPU, 4 cores) |
-|---|---|---|
-| phi3:latest | 2.2 GB | ~25-40 sec |
-| qwen2.5-coder:7b | 4.7 GB | ~60-90 sec |
-| gemma4:latest | 9.6 GB | ~90+ sec |
+Powered by **Groq cloud API** — no local GPU or model downloads needed. Typical response time: **~2 seconds** per analysis.
