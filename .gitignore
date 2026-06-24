@@ -50,6 +50,9 @@ venv/
 # Temp uploads
 data/temp/
 
+# Logs
+logs/
+
 # IDE
 .vscode/
 .idea/

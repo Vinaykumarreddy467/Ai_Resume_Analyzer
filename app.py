@@ -7,19 +7,21 @@ that processes uploaded PDFs through the LLM pipeline.
 import json
 import time
 import os
-import shutil
+import re
 import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from services.pdfreader import extract_text
 from services.prompbuilder import build_prompt
 from services.llmservice import generate_response
 from services.reportgenerator import save_reports
+from services.logger import get_logger
+
+log = get_logger("app")
 
 app = FastAPI(title="AI Resume Analyzer")
 
@@ -32,15 +34,20 @@ HTML_PATH = Path(__file__).parent / "index.html"
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
+    log.debug("Serving index.html")
     return HTML_PATH.read_text(encoding="utf-8")
 
 
 # ── Analysis endpoint ───────────────────────────────────────────
 @app.post("/analyze")
 async def analyze(resume: UploadFile = File(...), jd: UploadFile = File(...)):
+    request_id = uuid.uuid4().hex[:8]
+    log.info("[%s] Analysis request — resume=%s, jd=%s", request_id, resume.filename, jd.filename)
+
     # Validate file types
     for f, label in [(resume, "Resume"), (jd, "Job Description")]:
         if not f.filename or not f.filename.lower().endswith(".pdf"):
+            log.warning("[%s] Invalid file type: %s (%s)", request_id, f.filename, label)
             raise HTTPException(400, f"{label} must be a PDF file")
 
     # Save uploaded PDFs to temp
@@ -53,6 +60,7 @@ async def analyze(resume: UploadFile = File(...), jd: UploadFile = File(...)):
             with open(dst, "wb") as f:
                 content = await src.read()
                 f.write(content)
+        log.debug("[%s] Temp files written", request_id)
 
         # ── Pipeline ──────────────────────────────────────────
         total_start = time.time()
@@ -72,12 +80,14 @@ async def analyze(resume: UploadFile = File(...), jd: UploadFile = File(...)):
         try:
             analysis = json.loads(analysis_raw)
         except json.JSONDecodeError:
-            # Try to find JSON block in the response
-            import re
+            log.warning("[%s] LLM response was not pure JSON — attempting regex extraction", request_id)
             json_match = re.search(r'\{.*\}', analysis_raw, re.DOTALL)
             if json_match:
                 analysis = json.loads(json_match.group())
+                log.info("[%s] JSON extracted via regex", request_id)
             else:
+                log.error("[%s] No valid JSON found in LLM response", request_id)
+                log.debug("[%s] Raw response (first 500): %s", request_id, analysis_raw[:500])
                 raise HTTPException(500, f"LLM returned invalid JSON:\n{analysis_raw[:500]}")
 
         # Add metadata
@@ -88,6 +98,9 @@ async def analyze(resume: UploadFile = File(...), jd: UploadFile = File(...)):
         )
         analysis["resume_filename"] = resume.filename
         analysis["jd_filename"] = jd.filename
+
+        log.info("[%s] Analysis complete — score=%s, runtime=%.2fs, llm=%.2fs",
+                 request_id, analysis.get("match_score"), total_end - total_start, llm_end - llm_start)
 
         # Save report
         report_path = save_reports(analysis)
@@ -101,12 +114,14 @@ async def analyze(resume: UploadFile = File(...), jd: UploadFile = File(...)):
     except HTTPException:
         raise
     except Exception as e:
+        log.error("[%s] Analysis failed: %s", request_id, e, exc_info=True)
         raise HTTPException(500, f"Analysis failed: {str(e)}")
     finally:
         # Cleanup temp files
         for p in [resume_path, jd_path]:
             if p.exists():
                 p.unlink()
+                log.debug("[%s] Cleaned up temp file: %s", request_id, p.name)
 
 
 # ── List past reports ──────────────────────────────────────────
@@ -129,9 +144,11 @@ async def list_reports():
                 "jd_filename": data.get("jd_filename", "Unknown"),
                 "timestamp": data.get("total_runtime_seconds"),
             })
-        except Exception:
+        except Exception as e:
+            log.warning("Skipping corrupt report file: %s (%s)", f.name, e)
             continue
 
+    log.debug("Listed %d reports", len(reports))
     return {"reports": reports}
 
 
@@ -146,15 +163,17 @@ async def download_report(filename: str):
         filepath = filepath.resolve(strict=True)
         reports_dir = reports_dir.resolve()
         if not str(filepath).startswith(str(reports_dir)):
+            log.warning("Directory traversal attempt: %s", filename)
             raise HTTPException(400, "Invalid path")
     except (ValueError, FileNotFoundError):
         raise HTTPException(404, "Report not found")
 
     data = json.loads(filepath.read_text(encoding="utf-8"))
+    log.debug("Downloaded report: %s", filename)
     return JSONResponse(data)
 
 
-# ── Serve static assets (if any in future) ─────────────────────
+# ── 404 handler ────────────────────────────────────────────────
 @app.exception_handler(StarletteHTTPException)
 async def not_found_handler(request, exc):
     if exc.status_code == 404:

@@ -1,8 +1,8 @@
-"""LLM Service — Auto-detects Ollama (local) or falls back to Groq (cloud).
+"""LLM Service — Tries Ollama first with a timeout, falls back to Groq.
 
 Priority:
-1. Ollama — if the server is reachable at OLLAMA_URL
-2. Groq — if Ollama is down and GROQ_API_KEY is set
+1. Ollama — with 60-second total timeout (if reachable)
+2. Groq — if Ollama times out, is unavailable, or GROQ_API_KEY is set explicitly
 3. Error — if neither is available
 """
 
@@ -11,23 +11,32 @@ import time
 import json
 import requests
 from dotenv import load_dotenv
+from services.logger import get_logger
 
 load_dotenv()
+log = get_logger("llmservice")
 
 # ── Ollama config ──────────────────────────────────────────────
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "phi3:latest")
+OLLAMA_TIMEOUT = 60  # seconds — switch to Groq if Ollama exceeds this
+
 
 # ── Groq config (fallback) ─────────────────────────────────────
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama3-70b-8192")
 
-# ── Provider detection (cached for the lifetime of the process) ─
-_use_ollama = None
+
+# ── Exceptions ─────────────────────────────────────────────────
+class ProviderTimeout(Exception):
+    """Raised when the active provider takes too long to respond."""
+    pass
 
 
-def _check_ollama():
-    """Return True if Ollama is reachable."""
+# ── Helpers ────────────────────────────────────────────────────
+
+def _ollama_reachable():
+    """Quick check — is Ollama running?"""
     try:
         r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
         return r.status_code == 200
@@ -35,48 +44,46 @@ def _check_ollama():
         return False
 
 
-def _get_provider():
-    """Determine which provider to use. Result is cached."""
-    global _use_ollama
-    if _use_ollama is None:
-        if _check_ollama():
-            print(f"[LLM] ✅ Ollama detected at {OLLAMA_URL}")
-            _use_ollama = True
-        elif GROQ_API_KEY:
-            print("[LLM] ☁️  Ollama not detected — falling back to Groq")
-            _use_ollama = False
-        else:
-            print("[LLM] ❌ No LLM provider available (Ollama offline and no GROQ_API_KEY)")
-            _use_ollama = False  # will raise on first request
-    return _use_ollama
+def _has_groq():
+    return bool(GROQ_API_KEY)
 
+
+# ── Ollama (streaming, with total-timeout) ─────────────────────
 
 def _call_ollama(prompt):
-    """Stream response from Ollama."""
-    print(f"[LLM] Calling Ollama model: {OLLAMA_MODEL}")
+    """Stream response from Ollama. Raises ProviderTimeout if > OLLAMA_TIMEOUT."""
+    log.info("Calling Ollama model: %s", OLLAMA_MODEL)
+    deadline = time.time() + OLLAMA_TIMEOUT
+
     response = requests.post(
         f"{OLLAMA_URL}/api/generate",
         json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": True},
         stream=True,
-        timeout=300,
+        timeout=(10, OLLAMA_TIMEOUT),  # connect timeout, then read timeout
     )
     response.raise_for_status()
 
     full = ""
     for line in response.iter_lines():
+        if time.time() > deadline:
+            log.warning("Ollama timed out after %ds — aborting", OLLAMA_TIMEOUT)
+            raise ProviderTimeout(
+                f"Ollama took longer than {OLLAMA_TIMEOUT}s"
+            )
         if not line:
             continue
         chunk = json.loads(line)
         token = chunk.get("response", "")
-        print(token, end="", flush=True)
         full += token
-    print()
+    log.info("Ollama streaming complete (%d chars)", len(full))
     return full
 
 
+# ── Groq (cloud) ───────────────────────────────────────────────
+
 def _call_groq(prompt):
-    """Call Groq API (non-streaming for simplicity)."""
-    print(f"[LLM] Calling Groq model: {GROQ_MODEL}")
+    """Call Groq API (non-streaming)."""
+    log.info("Calling Groq model: %s", GROQ_MODEL)
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json",
@@ -96,26 +103,46 @@ def _call_groq(prompt):
     response.raise_for_status()
     data = response.json()
     content = data["choices"][0]["message"]["content"]
-    print(content)
+    log.info("Groq response received (%d chars)", len(content))
     return content
 
 
+# ── Main entry point ───────────────────────────────────────────
+
 def generate_response(prompt):
-    """Generate a response using the best available provider."""
-    if _get_provider():
-        # Ollama is available
-        if OLLAMA_MODEL:
+    """Generate a response — tries Ollama (with timeout), falls back to Groq."""
+
+    ollama_up = _ollama_reachable()
+
+    # ── Try Ollama first if it's running ───────────────────────
+    if ollama_up:
+        if not OLLAMA_MODEL:
+            raise RuntimeError("Ollama is running but OLLAMA_MODEL is not set in .env")
+        try:
+            log.info("Ollama reachable — trying local inference")
             return _call_ollama(prompt)
-        else:
+        except ProviderTimeout:
+            log.warning("Ollama timed out — switching to Groq")
+        except requests.RequestException as e:
+            log.error("Ollama error: %s — switching to Groq", e)
+
+        # Fall through to Groq on timeout / error
+        if not _has_groq():
             raise RuntimeError(
-                "Ollama is running but OLLAMA_MODEL is not set in .env"
+                "Ollama failed and no GROQ_API_KEY is set in .env.\n"
+                "  • Set a shorter model in .env (e.g., OLLAMA_MODEL=phi3:latest)\n"
+                "  • Or set GROQ_API_KEY for cloud fallback"
             )
-    elif GROQ_API_KEY:
-        # Groq fallback
+
+    # ── Fallback: Groq ─────────────────────────────────────────
+    if _has_groq():
+        log.info("Using Groq cloud fallback")
         return _call_groq(prompt)
-    else:
-        raise RuntimeError(
-            "No LLM provider available.\n"
-            "  • Start Ollama (ollama serve) OR\n"
-            "  • Set GROQ_API_KEY in .env (get one at https://console.groq.com/keys)"
-        )
+
+    # ── Nothing works ──────────────────────────────────────────
+    log.error("No LLM provider available (Ollama down, no GROQ_API_KEY)")
+    raise RuntimeError(
+        "No LLM provider available.\n"
+        "  • Start Ollama (ollama serve) OR\n"
+        "  • Set GROQ_API_KEY in .env (get one at https://console.groq.com/keys)"
+    )

@@ -1,4 +1,12 @@
+"""LLM prompt builder service."""
+
+from services.logger import get_logger
+
+log = get_logger("prompbuilder")
+
+
 def build_prompt(resume_text, jd_text):
+    log.debug("Building prompt (resume=%d chars, jd=%d chars)", len(resume_text), len(jd_text))
     prompt = f"""
 you are an expert ATS (Application Tracking System ) and resume reviewer . 
 
@@ -37,4 +45,6 @@ EXAMPLE OUTPUT STRUCTURE :
     "recommendations": []
 }}
 """
-    return prompt.strip()
+    result = prompt.strip()
+    log.info("Prompt built: %d chars", len(result))
+    return result
